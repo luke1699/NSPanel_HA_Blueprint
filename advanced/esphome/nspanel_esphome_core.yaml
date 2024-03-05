@@ -16,6 +16,8 @@ substitutions:
   device_name: NSPanel
   name: ${device_name}
   friendly_name: ${device_name}
+  username_webserver: ${user_webserver}
+  password_webserver: ${pssw_webserver}
   wifi_timeout: '15'
   ##### DON'T CHANGE THIS ######
   version: "4.2.6"
@@ -83,7 +85,6 @@ wifi:
       ssid: ${wifi_ssid}
       password: ${wifi_password}
   ap:
-    ssid: "${name}"
     password: ${ap_password}
   on_connect:
     then:
@@ -128,6 +129,13 @@ uart:
     rx_pin: 17
     baud_rate: 115200
 
+##### WEB SERVER CONFIGURATION #####
+web_server:
+  port: 80
+  auth:
+    username: ${username_webserver}
+    password: ${password_webserver}
+    
 ##### Keeps time display updated #####
 time:
   - id: time_provider
