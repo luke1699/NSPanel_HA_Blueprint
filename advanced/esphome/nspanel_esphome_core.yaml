@@ -132,6 +132,7 @@ uart:
 time:
   - id: time_provider
     platform: homeassistant
+    timezone: Europe/Rome # Imposta il fuso orario locale di Home Assistant
     on_time:
       - seconds: 0
         then:
