@@ -17,7 +17,7 @@ substitutions:
   name: ${device_name}
   friendly_name: ${device_name}
   wifi_timeout: '15'
-  project_name: "LDZ Engineering"
+  project_name: "LDZ_Engineering"
   project_version: "4.2.6"
   ##### DON'T CHANGE THIS ######
   version: "4.2.6"
