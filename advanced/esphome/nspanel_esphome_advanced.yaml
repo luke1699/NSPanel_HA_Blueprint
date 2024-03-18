@@ -8,14 +8,13 @@
 #####################################################################################################
 ---
 substitutions:
-  ##### Do not change this here.  #####
-  ##### Set your substitutions on #####
-  ##### your base yaml file.      #####
+  ##############################
+  ## Change only in your      ##
+  ## local yaml substitutions ##
   web_password: ${wifi_password}
-  #####################################
+  ##############################
 
 button:
-  ##### EXIT REPARSE TFT DISPLAY #####
   - name: Exit reparse
     platform: template
     icon: mdi:file-sync
@@ -91,11 +90,13 @@ text_sensor:
 
 time:
   - id: !extend time_provider
+    timezone: Europe/Rome # Imposta il fuso orario locale di Home Assistant
     on_time_sync:
       then:
         - component.update: api_timestamp
         - component.update: device_timestamp
 
+##### Web server #####
 web_server:
   id: web_server_std
   port: 80

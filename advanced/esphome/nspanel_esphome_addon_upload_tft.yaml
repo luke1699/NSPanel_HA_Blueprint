@@ -10,37 +10,59 @@
 substitutions:
   ################## Defaults ##################
   # Just in case user forgets to set something #
-  nextion_update_url: "https://raw.githubusercontent.com/luke1699/NSPanel_HA_Blueprint/main/nspanel_eu.tft"
-  nextion_update_base_url: "https://raw.githubusercontent.com/luke1699/NSPanel_HA_Blueprint/"
+  nextion_update_base_url: "https://raw.githubusercontent.com/Blackymas/NSPanel_HA_Blueprint/"
+  nextion_update_url: "${nextion_update_base_url}/main/hmi/nspanel_blank.tft"
   ##############################################
 
+##### External components #####
+external_components:
+  - source:
+      type: git
+      url: https://github.com/Blackymas/NSPanel_HA_Blueprint
+      ref: beta   # To do: Change it for releasing
+    components:
+      - nspanel_ha_blueprint_upload_tft
+    refresh: 300s
+
+# yamllint disable rule:comments-indentation
 api:
-  on_client_connected:
-    - script.execute: report_settings
-
   services:
-    ##### SERVICE TO UPDATE THE TFT FILE from URL #####
-    ##### It will use the default url if url is empty or "default"
-    - service: upload_tft_url
-      variables:
-        url: string
-      then:
-        - lambda: |-
-            static const char *const TAG = "addon_upload_tft.service.upload_tft_url";
-            ESP_LOGVV(TAG, "Starting...");
-
-            std::string clean_url = url;
-            // Convert to lowercase
-            std::transform(clean_url.begin(), clean_url.end(), clean_url.begin(),
-                          [](unsigned char c){ return std::tolower(c); });
-            // Trim trailing spaces
-            auto endPos = clean_url.find_last_not_of(" \t");
-            if (std::string::npos != endPos) {
-              clean_url = clean_url.substr(0, endPos + 1);
-            }
-
-            if (clean_url.empty() or clean_url == "default") url = id(tft_url);
-            upload_tft->execute(url.c_str());
+    ##### TFT File Update Service: `upload_tft`
+      # Updates the panel's TFT file remotely from a specified URL or the default location, requiring the "Upload TFT" add-on.
+      # Usage: Essential for applying custom TFT designs or updates, especially when direct repository access is unavailable.
+      #
+      # Parameters:
+      # - `url` (string): URL for the TFT file. If "default" or empty, uses the URL from "Update TFT - Display Model" in Home Assistant settings.
+      #
+      # Example:
+      # service: esphome.<your_panel_name>_upload_tft
+      # data:
+      #   url: "http://homeassistant.local:8123/local/custom_tft_file.tft"  # Custom or default URL to the TFT file
+      #
+      # [!NOTE]
+      # Utilize "default" to automatically use the URL associated with the display model set in Home Assistant.
+      #
+      # [!ATTENTION]
+      # Requires the "Upload TFT" add-on for functionality.
+      # yamllint disable-line rule:indentation
+      - service: upload_tft
+        variables:
+          url: string
+        then:
+          - lambda: |-
+              std::string clean_url = url;
+              // Convert to lowercase
+              std::transform(clean_url.begin(), clean_url.end(), clean_url.begin(),
+                            [](unsigned char c){ return std::tolower(c); });
+              // Trim trailing spaces
+              auto endPos = clean_url.find_last_not_of(" \t");
+              if (std::string::npos != endPos) clean_url = clean_url.substr(0, endPos + 1);
+              if (clean_url.empty() or clean_url == "default") url = nspanel_ha_blueprint_upload_tft::construct_tft_url("v${version}",
+                                                                                                                        tft_file_model->state,
+                                                                                                                        "${nextion_update_url}",
+                                                                                                                        "${nextion_update_base_url}");
+              upload_tft->execute(url.c_str());
+# yamllint enable rule:comments-indentation
 
 button:
   ##### UPDATE TFT DISPLAY #####
@@ -51,9 +73,10 @@ button:
     entity_category: config
     on_press:
       - lambda: |-
-          static const char *const TAG = "addon_upload_tft.button.tft_update.on_press";
-          ESP_LOGD(TAG, "Update TFT display button pressed");
-          upload_tft->execute(id(tft_url).c_str());
+          upload_tft->execute(nspanel_ha_blueprint_upload_tft::construct_tft_url("v${version}",
+                                                                                tft_file_model->state,
+                                                                                "${nextion_update_url}",
+                                                                                "${nextion_update_base_url}").c_str());
 
 display:
   - id: !extend disp1
@@ -61,40 +84,41 @@ display:
     exit_reparse_on_start: true
 
 globals:
-  - id: baud_rate_original
-    type: uint
-    restore_value: false
-    initial_value: '115200'
-
   - id: tft_is_valid
     type: bool
     restore_value: false
     initial_value: 'false'
 
   - id: tft_upload_attempt
-    type: uint
+    type: uint8_t
     restore_value: false
     initial_value: '0'
-
-  - id: tft_url
-    type: std::string
-    restore_value: false
-    initial_value: '"${nextion_update_url}"'
 
   - id: tft_upload_result
     type: esphome::nextion::Nextion::TFTUploadResult
     restore_value: false
     initial_value: 'esphome::nextion::Nextion::TFTUploadResult::UNKNOWN'
 
+nspanel_ha_blueprint_upload_tft:
+
 script:
+  - id: nextion_status
+    mode: restart
+    then:
+      - lambda: |-
+          static const char *const TAG = "script.nextion_status";
+          ESP_LOGD(TAG, "Nextion status:");
+          ESP_LOGD(TAG, "  Is detected: %s", YESNO(disp1->is_detected()));
+          ESP_LOGD(TAG, "  Is setup:    %s", YESNO(disp1->is_setup()));
+          ESP_LOGD(TAG, "  Queue size:  %d", disp1->queue_size());
+
   - id: nextion_upload
     mode: single
     parameters:
       baud_rate: uint32_t
     then:
       - lambda: |-
-          static const char *const TAG = "addon_upload_tft.script.nextion_upload";
-          ESP_LOGD(TAG, "Waiting for empty UART and Nextion queues");
+          ESP_LOGD("addon_upload_tft.script.nextion_upload", "Waiting for empty UART and Nextion queues");
       - wait_until:
           condition:
             - lambda: return (disp1->queue_size() < 1);
@@ -102,10 +126,9 @@ script:
           timeout: 10s
       - delay: 2s
       - lambda: |-
-          static const char *const TAG = "addon_upload_tft.script.nextion_upload";
-          ESP_LOGD(TAG, "Starting TFT upload...");
+          ESP_LOGD("addon_upload_tft.script.nextion_upload", "Starting TFT upload...");
           id(tft_upload_result) = disp1->upload_tft(baud_rate, !disp1->is_setup());
-          ESP_LOGD(TAG, "TFT upload: %s", esphome::nextion::Nextion::tft_upload_result_to_string(id(tft_upload_result)));
+          ESP_LOGD("addon_upload_tft.script.nextion_upload", "TFT upload: %s", esphome::nextion::Nextion::tft_upload_result_to_string(id(tft_upload_result)));
 
   - id: open_upload_dialog
     mode: restart
@@ -124,21 +147,12 @@ script:
             disp1->hide_component("bt_accept");
             disp1->hide_component("bt_clear");
           }
-          disp1->set_component_text_printf("confirm.title", "Upload TFT\\r%s",
-                  id(framework) == 1 ? "Arduino" : (id(framework) == 2 ? "ESP-IDF" : "Unknown"));
+          #ifdef ARDUINO
+          disp1->set_component_text_printf("confirm.title", "Upload TFT\\rArduino");
+          #elif defined(USE_ESP_IDF)
+          disp1->set_component_text_printf("confirm.title", "Upload TFT\\rESP-IDF");
+          #endif
           page_id->update();
-
-  - id: report_settings
-    mode: restart
-    then:
-      - delay: 15s
-      - lambda: |-
-          static const char *const TAG = "addon_upload_tft.script.report_settings";
-          ESP_LOGI(TAG, "TFT URL: %s", id(tft_url).c_str());
-          ESP_LOGI(TAG, "Substitutions:");
-          ESP_LOGI(TAG, "  nextion_update_url:        ${nextion_update_url}");
-          ESP_LOGI(TAG, "  nextion_update_base_url:   ${nextion_update_base_url}");
-          ESP_LOGI(TAG, "  TFT upload baud rate:      %s bps", tft_upload_baud_rate->state.c_str());
 
   - id: report_upload_progress
     mode: restart
@@ -146,8 +160,7 @@ script:
       message: string
     then:
       - lambda: |-
-          static const char *const TAG = "addon_upload_tft.script.report_upload_progress";
-          ESP_LOGD(TAG, "%s", message.c_str());
+          ESP_LOGD("addon_upload_tft.script.report_upload_progress", "%s", message.c_str());
           if (id(tft_is_valid)) {
             if (page_id->state != 26) {
               open_upload_dialog->execute();
@@ -157,50 +170,12 @@ script:
             App.feed_wdt();
           }
 
-  - id: set_tft_file
-    mode: restart
+  - id: !extend stop_all
     then:
-      - delay: 2s
       - lambda: |-
-          static const char *const TAG = "addon_upload_tft.script.set_tft_file";
-          std::string branch = "v${version}";
-          if (branch.find("beta") != std::string::npos) branch = "beta";
-          else if (branch.find("dev") != std::string::npos) branch = "dev";
-          std::string model = tft_file_model->state;
-          ESP_LOGD(TAG, "TFT URL set:");
-          ESP_LOGD(TAG, "  Branch:   %s", branch.c_str());
-          ESP_LOGD(TAG, "  Model:    %s", model.c_str());
+          nextion_status->stop();
 
-          if (id(is_uploading_tft))
-            ESP_LOGW(TAG, "  TFT Upload in progress.");
-          else {
-            std::string url;
-            std::string file_name;
-            if (model == "NSPanel Blank") file_name = "nspanel_blank.tft";
-            else if (model == "NSPanel EU") file_name = "nspanel_eu.tft";
-            else if (model == "NSPanel US") file_name = "nspanel_us.tft";
-            else if (model == "NSPanel US Landscape") file_name = "nspanel_us_land.tft";
-            else if (model == "NSPanel EU (CJK languages)") file_name = "advanced/hmi/nspanel_CJK_eu.tft";
-            else if (model == "NSPanel US (CJK languages)") file_name = "advanced/hmi/nspanel_CJK_us.tft";
-            else if (model == "NSPanel US Landscape (CJK languages)") file_name = "advanced/hmi/nspanel_CJK_us_land.tft";
-            if (file_name.empty()) url = "${nextion_update_url}";
-            else {
-              std::string base_url("${nextion_update_base_url}");
-              url = base_url + branch + "/" + file_name;
-
-              // Remove trailing slashes or spaces
-              auto endPos = url.find_last_not_of(" /");
-              if (std::string::npos != endPos) {
-                  url = url.substr(0, endPos + 1);
-              }
-            }
-
-            ESP_LOGD(TAG, "  Full URL: %s", url.c_str());
-            id(tft_url) = url;
-            disp1->set_tft_url(url.c_str());
-          }
-
-  - id: upload_tft  # I've changed this to use ESPHome commands to avoid the parallelism from lambdas
+  - id: upload_tft
     mode: single
     parameters:
       url: string
@@ -212,12 +187,9 @@ script:
           then:
             - switch.turn_on: screen_power
             - delay: 5s
-      # Wait for recent changes to TFT url
-      - script.wait: set_tft_file
       # Then start the upload
       - lambda: |-
           static const char *const TAG = "addon_upload_tft.script.upload_tft";
-          ESP_LOGD(TAG, "Starting...");
 
           id(is_uploading_tft) = true;
 
@@ -327,11 +299,9 @@ script:
       ### This code should never run
       - delay: 2s
       - lambda: |-
-          static const char *const TAG = "addon_upload_tft.script.upload_tft";
-          ESP_LOGD(TAG, "Finishing...");
           id(is_uploading_tft) = false;
           screen_power->publish_state(true);
-          ESP_LOGE(TAG, "TFT upload finished unsuccessfully!");
+          ESP_LOGE("addon_upload_tft.script.upload_tft", "TFT upload finished unsuccessfully!");
 
   - id: upload_tft_sequence_attempt
     mode: single
@@ -401,16 +371,6 @@ script:
                 ESP_LOGI("addon_upload_tft.script.upload_tft_attempt", "Restarting ESPHome");
                 App.safe_reboot();
 
-  - id: !extend watchdog
-    then:
-      - lambda: |-
-          if (!id(is_uploading_tft)) {
-            static const char *const TAG = "addon_upload_tft.script.watchdog";
-            ESP_LOGI(TAG, "Add-on Upload TFT:");
-            ESP_LOGI(TAG, "  File model: %s", tft_file_model->state.c_str());
-            ESP_LOGI(TAG, "  Valid TFT:  %s", YESNO(id(tft_is_valid)));
-          }
-
 select:
   - id: tft_file_model
     name: Update TFT display - Model
@@ -424,15 +384,13 @@ select:
       - "NSPanel EU (CJK languages)"
       - "NSPanel US (CJK languages)"
       - "NSPanel US Landscape (CJK languages)"
-    initial_option: "Use nextion_update_url"
+    initial_option: "NSPanel EU"
     optimistic: true
     restore_value: true
     internal: false
     entity_category: config
     disabled_by_default: false
     icon: mdi:file-sync
-    on_value:
-      - script.execute: set_tft_file
 
   - id: tft_upload_baud_rate
     name: Update TFT display - Baud rate
